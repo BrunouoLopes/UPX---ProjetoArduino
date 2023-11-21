@@ -1,0 +1,103 @@
+#include "EmonLib.h" //adiciona a biblioteca
+EnergyMonitor emonl; //cria uma instância
+float ruido = 0.033; //Variável para ruído do sensor
+#define LAMP 19//Define o LAMP como 8
+#include<Firebase_ESP_Client.h>
+#include "addons/TokenHelper.h"
+#include "addons/RTDBHelper.h"
+#include <WiFi.h>
+#define WIFI_SSID "hugo"
+#define WIFI_PASSWORD "12345678"
+#define API_KEY "AIzaSyBkKx0yg2M3_6Wg5iNzKnCkcKY_6uOpisY"
+#define DATABASE_URL "projeto-upx-facens-default-rtdb.firebaseio.com"
+#define USER_EMAIL "hugoewada@gmail.com"
+#define USER_PASSWORD "123456789"
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
+
+unsigned long sendDataPrevMillis = 0;
+bool signupOK = false;
+int ldrData;
+float corrente = 0.0;
+int correnteData;
+
+
+int LDR;//Variável para a leitura do LDR
+int cont;//Variável utilizada para armazenar os valores lidos pelo sensor
+int i;//Variável para contagem
+
+
+void setup()
+{
+  Serial.begin(115200);//Inicia a serial
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting to Wi-Fi");
+  while(WiFi.status()!= WL_CONNECTED){
+    Serial.print(".");delay(300);
+  }
+
+  Serial.println();
+  Serial.print("Connected with IP: ");
+  Serial.println(WiFi.localIP());
+  Serial.println();
+
+  config.api_key = API_KEY;
+  config.database_url= DATABASE_URL;
+  auth.user.email = USER_EMAIL;
+  auth.user.password = USER_PASSWORD;
+
+config.token_status_callback = tokenStatusCallback;
+Firebase.begin(&config, &auth);
+Firebase.reconnectWiFi(true);
+ pinMode(LAMP,OUTPUT);//Define o pino 19 como saída
+ digitalWrite(LAMP, HIGH);//Inicia em estado Lógico Alto, no caso, relé desligado
+  
+   emonl.current(32, 1);//Corrente: pino, calibração
+    
+    
+}
+void loop()
+{
+ if(Firebase.ready() && (millis() - sendDataPrevMillis > 10000 || sendDataPrevMillis == 0 )){
+  sendDataPrevMillis = millis();
+  double Irms = emonl.calcIrms(1480); // calcula a corrente
+  Irms = (Irms - ruido) * 1000; // Tira o ruido   
+  LDR = analogRead(33);//sinal analógico no esp32 que usa wifi precisa ser nos pinos adc1, se for nos adcs2 n vai kk
+  if(Firebase.RTDB.setInt(&fbdo, "Sensor/ldr_data", LDR)){
+
+  Serial.println(); Serial.print(LDR);
+  Serial.print(" - salvo com sucesso em: " + fbdo.dataPath());
+  Serial.println("("+fbdo.dataType()+")");
+  }else{
+    Serial.println("FALHOU: " + fbdo.errorReason());
+  }
+  if (Irms < 0)
+  {
+        Irms = 0;
+  }  
+
+  if(Firebase.RTDB.setFloat(&fbdo, "Sensor/corrente", Irms)){
+
+  Serial.println(); Serial.print(Irms);
+  Serial.print(" - salvo com sucesso em: " + fbdo.dataPath());
+  Serial.println("("+fbdo.dataType()+")");
+  }else{
+    Serial.println("FALHOU: " + fbdo.errorReason());
+  }
+  if (Irms < 10) {
+    if(Firebase.RTDB.setBool(&fbdo, "Sensor/luz_queimada", true)) {
+      Serial.println("Luz queimada - enviado ao Firebase");
+    } else {
+      Serial.println("Falha ao enviar status da luz queimada ao Firebase: " + fbdo.errorReason());
+    }
+  } else {
+    if(Firebase.RTDB.setBool(&fbdo, "Sensor/luz_queimada", false)) {
+      Serial.println("Luz não queimada - enviado ao Firebase");
+    } else {
+      Serial.println("Falha ao enviar status da luz ao Firebase: " + fbdo.errorReason());
+    }
+  }
+		  (LDR >= 600) ? (digitalWrite(LAMP,HIGH)) : (digitalWrite(LAMP,LOW));
+
+}}
